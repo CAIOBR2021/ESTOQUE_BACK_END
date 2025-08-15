@@ -44,7 +44,7 @@ async function setupDatabase() {
       estoqueMinimo INTEGER,
       localArmazenamento TEXT,
       fornecedor TEXT,
-      "criadoEm" TIMESTAMPTZ NOT NULL,
+      "criadoEm" TIMESTAMPTZ NOT NULL
       "atualizadoEm" TIMESTAMPTZ
     );
 
