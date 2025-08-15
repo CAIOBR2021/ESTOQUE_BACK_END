@@ -6,7 +6,7 @@ const { Pool } = require('pg');
 
 // --- CONFIGURAÇÃO INICIAL ---
 const app = express();
-const PORT = process.env.PORT || 3001; // Usar a porta do ambiente ou 3001
+const PORT = process.env.PORT || 10000; // Usar a porta do ambiente ou 3001
 
 // Middlewares
 app.use(cors());
