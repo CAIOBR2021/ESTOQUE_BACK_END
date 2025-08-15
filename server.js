@@ -29,7 +29,10 @@ pool.connect()
 
 
 // Função para criar as tabelas se não existirem
+
 async function setupDatabase() {
+  console.log("Iniciando a configuração do banco de dados..."); // Log de início
+
   const createTablesScript = `
     CREATE TABLE IF NOT EXISTS produtos (
       id UUID PRIMARY KEY,
@@ -42,26 +45,26 @@ async function setupDatabase() {
       estoqueMinimo INTEGER,
       localArmazenamento TEXT,
       fornecedor TEXT,
-      criadoEm TIMESTAMPTZ NOT NULL,
-      atualizadoEm TIMESTAMPTZ
+      "criadoEm" TIMESTAMPTZ NOT NULL,
+      "atualizadoEm" TIMESTAMPTZ
     );
 
     CREATE TABLE IF NOT EXISTS movimentacoes (
       id UUID PRIMARY KEY,
-      produtoId UUID NOT NULL,
+      "produtoId" UUID NOT NULL,
       tipo TEXT NOT NULL,
       quantidade INTEGER NOT NULL,
       motivo TEXT,
-      criadoEm TIMESTAMPTZ NOT NULL,
-      FOREIGN KEY (produtoId) REFERENCES produtos (id) ON DELETE CASCADE
+      "criadoEm" TIMESTAMPTZ NOT NULL,
+      FOREIGN KEY ("produtoId") REFERENCES produtos (id) ON DELETE CASCADE
     );
   `;
 
   try {
     await pool.query(createTablesScript);
-    console.log("Database tables verified.");
+    console.log("SUCESSO: Tabelas do banco de dados verificadas/criadas com sucesso.");
   } catch (err) {
-    console.error("Error creating tables:", err.message);
+    console.error("ERRO CRÍTICO AO CRIAR TABELAS:", err);
   }
 }
 
