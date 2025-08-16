@@ -24,12 +24,10 @@ pool.connect()
   })
   .catch(err => console.error("Error connecting to the database:", err.message));
 
-
 // Função para criar as tabelas se não existirem
 async function setupDatabase() {
   console.log("Iniciando a configuração do banco de dados...");
 
-  // Script SQL com nomes em minúsculas para consistência
   const createTablesScript = `
     CREATE TABLE IF NOT EXISTS produtos (
       id UUID PRIMARY KEY,
@@ -66,17 +64,24 @@ async function setupDatabase() {
 }
 
 // --- FUNÇÕES AUXILIARES ---
-function uid() {
-  return crypto.randomUUID();
-}
+function uid() { return crypto.randomUUID(); }
+function gerarSKU() { return `PROD-${Math.random().toString(36).substring(2, 8).toUpperCase()}`; }
+function nowISO() { return new Date().toISOString(); }
 
-function gerarSKU() {
-  const skuPart = Math.random().toString(36).substring(2, 8).toUpperCase();
-  return `PROD-${skuPart}`;
-}
-
-function nowISO() {
-  return new Date().toISOString();
+// FUNÇÃO DE CONVERSÃO CORRIGIDA
+function toCamelCase(obj) {
+    const newObj = {};
+    for (const key in obj) {
+        const camelKey = key.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+        // Mapeamento manual para os casos específicos do nosso schema
+        if (camelKey === 'estoqueminimo') newObj['estoqueMinimo'] = obj[key];
+        else if (camelKey === 'localarmazenamento') newObj['localArmazenamento'] = obj[key];
+        else if (camelKey === 'criadoem') newObj['criadoEm'] = obj[key];
+        else if (camelKey === 'atualizadoem') newObj['atualizadoEm'] = obj[key];
+        else if (camelKey === 'produtoid') newObj['produtoId'] = obj[key];
+        else newObj[camelKey] = obj[key];
+    }
+    return newObj;
 }
 
 // --- ROTAS DA API ---
@@ -84,20 +89,8 @@ function nowISO() {
 // GET: Listar todos os produtos
 app.get('/api/produtos', async (req, res) => {
   try {
-    const sql = 'SELECT * FROM produtos ORDER BY nome ASC';
-    const { rows } = await pool.query(sql);
-    // Converte os nomes das colunas para camelCase para o frontend
-    const camelCaseRows = rows.map(row => {
-        const newRow = {};
-        for (const key in row) {
-            const camelKey = key.replace(/([-_][a-z])/ig, ($1) => {
-                return $1.toUpperCase().replace('-', '').replace('_', '');
-            });
-            newRow[camelKey] = row[key];
-        }
-        return newRow;
-    });
-    res.json(camelCaseRows);
+    const { rows } = await pool.query('SELECT * FROM produtos ORDER BY nome ASC');
+    res.json(rows.map(toCamelCase));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -106,20 +99,8 @@ app.get('/api/produtos', async (req, res) => {
 // GET: Listar todas as movimentações
 app.get('/api/movimentacoes', async (req, res) => {
     try {
-        const sql = 'SELECT * FROM movimentacoes ORDER BY criadoem DESC';
-        const { rows } = await pool.query(sql);
-        // Converte os nomes das colunas para camelCase para o frontend
-        const camelCaseRows = rows.map(row => {
-            const newRow = {};
-            for (const key in row) {
-                const camelKey = key.replace(/([-_][a-z])/ig, ($1) => {
-                    return $1.toUpperCase().replace('-', '').replace('_', '');
-                });
-                newRow[camelKey] = row[key];
-            }
-            return newRow;
-        });
-        res.json(camelCaseRows);
+        const { rows } = await pool.query('SELECT * FROM movimentacoes ORDER BY criadoem DESC');
+        res.json(rows.map(toCamelCase));
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -133,7 +114,6 @@ app.post('/api/produtos', async (req, res) => {
     return res.status(400).json({ error: 'Name and Unit are mandatory.' });
   }
   
-  // O frontend envia camelCase, mas o banco de dados espera minúsculas.
   const novoProduto = {
     id: uid(),
     sku: gerarSKU(),
@@ -142,7 +122,7 @@ app.post('/api/produtos', async (req, res) => {
     categoria: categoria || null,
     unidade,
     quantidade: Number(quantidade) || 0,
-    estoqueminimo: Number(estoqueMinimo) || null,
+    estoqueminimo: estoqueMinimo !== undefined ? Number(estoqueMinimo) : null,
     localarmazenamento: localArmazenamento || null,
     fornecedor: fornecedor || null,
     criadoem: nowISO(),
@@ -155,23 +135,11 @@ app.post('/api/produtos', async (req, res) => {
     RETURNING *
   `;
 
-  const params = [
-    novoProduto.id, novoProduto.sku, novoProduto.nome, novoProduto.descricao, novoProduto.categoria,
-    novoProduto.unidade, novoProduto.quantidade, novoProduto.estoqueminimo, novoProduto.localarmazenamento,
-    novoProduto.fornecedor, novoProduto.criadoem, novoProduto.atualizadoem
-  ];
+  const params = Object.values(novoProduto);
 
   try {
     const { rows } = await pool.query(sql, params);
-    // Converte a resposta de volta para camelCase para o frontend
-    const newRow = {};
-    for (const key in rows[0]) {
-        const camelKey = key.replace(/([-_][a-z])/ig, ($1) => {
-            return $1.toUpperCase().replace('-', '').replace('_', '');
-        });
-        newRow[camelKey] = rows[0][key];
-    }
-    res.status(201).json(newRow);
+    res.status(201).json(toCamelCase(rows[0]));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -182,23 +150,14 @@ app.put('/api/produtos/:id', async (req, res) => {
     const { id } = req.params;
     const patch = req.body;
 
-    const allowedFields = [
-        'nome', 'descricao', 'categoria', 'unidade', 'estoqueMinimo', 
-        'localArmazenamento', 'fornecedor'
-    ];
-
-    const fieldsToUpdate = Object.keys(patch)
-        .filter(key => allowedFields.includes(key));
+    const allowedFields = ['nome', 'descricao', 'categoria', 'unidade', 'estoqueMinimo', 'localArmazenamento', 'fornecedor'];
+    const fieldsToUpdate = Object.keys(patch).filter(key => allowedFields.includes(key));
 
     if (fieldsToUpdate.length === 0) {
         return res.status(400).json({ error: 'Nenhum campo válido para atualização foi fornecido.' });
     }
 
-    // CONVERTE OS CAMPOS PARA MINÚSCULAS PARA O SQL
-    const setClause = fieldsToUpdate
-        .map((field, index) => `${field.toLowerCase()} = $${index + 1}`)
-        .join(', ');
-
+    const setClause = fieldsToUpdate.map((field, index) => `${field.toLowerCase()} = $${index + 1}`).join(', ');
     const values = fieldsToUpdate.map(key => patch[key]);
 
     const sql = `
@@ -212,45 +171,25 @@ app.put('/api/produtos/:id', async (req, res) => {
     
     try {
         const result = await pool.query(sql, params);
-
-        if (result.rowCount === 0) {
-            return res.status(404).json({ error: 'Produto não encontrado.' });
-        }
-        
-        const updatedProduct = result.rows[0];
-        // Converte a resposta de volta para camelCase para o frontend
-        const newRow = {};
-        for (const key in updatedProduct) {
-            const camelKey = key.replace(/([-_][a-z])/ig, ($1) => {
-                return $1.toUpperCase().replace('-', '').replace('_', '');
-            });
-            newRow[camelKey] = updatedProduct[key];
-        }
-        res.status(200).json(newRow);
-
+        if (result.rowCount === 0) return res.status(404).json({ error: 'Produto não encontrado.' });
+        res.status(200).json(toCamelCase(result.rows[0]));
     } catch (err) {
         console.error("Erro ao atualizar produto:", err.message);
         res.status(500).json({ error: err.message });
     }
 });
 
-
 // DELETE: Deletar produto
 app.delete('/api/produtos/:id', async (req, res) => {
     const { id } = req.params;
-    const sql = 'DELETE FROM produtos WHERE id = $1';
-    
     try {
-        const result = await pool.query(sql, [id]);
-        if (result.rowCount === 0) {
-            return res.status(404).json({ error: 'Product not found.' });
-        }
+        const result = await pool.query('DELETE FROM produtos WHERE id = $1', [id]);
+        if (result.rowCount === 0) return res.status(404).json({ error: 'Product not found.' });
         res.status(200).json({ message: 'Product and its movements have been deleted.' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
-
 
 // POST: Criar movimentação (com transação)
 app.post('/api/movimentacoes', async (req, res) => {
@@ -261,17 +200,12 @@ app.post('/api/movimentacoes', async (req, res) => {
     }
 
     const client = await pool.connect();
-
     try {
         await client.query('BEGIN');
-
-        const getProductSql = 'SELECT * FROM produtos WHERE id = $1 FOR UPDATE';
-        const productResult = await client.query(getProductSql, [produtoId]);
+        const productResult = await client.query('SELECT * FROM produtos WHERE id = $1 FOR UPDATE', [produtoId]);
         const produto = productResult.rows[0];
 
-        if (!produto) {
-            throw new Error('Product not found for movement.');
-        }
+        if (!produto) throw new Error('Product not found for movement.');
 
         let novaQuantidade;
         if (tipo === "ajuste") {
@@ -282,8 +216,7 @@ app.post('/api/movimentacoes', async (req, res) => {
         }
         novaQuantidade = Math.max(0, novaQuantidade);
 
-        const updateSql = 'UPDATE produtos SET quantidade = $1, atualizadoem = $2 WHERE id = $3';
-        await client.query(updateSql, [novaQuantidade, nowISO(), produtoId]);
+        await client.query('UPDATE produtos SET quantidade = $1, atualizadoem = $2 WHERE id = $3', [novaQuantidade, nowISO(), produtoId]);
         
         const novaMov = {
             id: uid(),
@@ -293,38 +226,22 @@ app.post('/api/movimentacoes', async (req, res) => {
             motivo: motivo || null,
             criadoem: nowISO()
         };
-        const insertMovSql = 'INSERT INTO movimentacoes (id, produtoid, tipo, quantidade, motivo, criadoem) VALUES ($1, $2, $3, $4, $5, $6)';
-        await client.query(insertMovSql, [novaMov.id, novaMov.produtoid, novaMov.tipo, novaMov.quantidade, novaMov.motivo, novaMov.criadoem]);
-
-        const getUpdatedProductSql = 'SELECT * FROM produtos WHERE id = $1';
-        const updatedProductResult = await client.query(getUpdatedProductSql, [produtoId]);
+        await client.query('INSERT INTO movimentacoes (id, produtoid, tipo, quantidade, motivo, criadoem) VALUES ($1, $2, $3, $4, $5, $6)', Object.values(novaMov));
+        const updatedProductResult = await client.query('SELECT * FROM produtos WHERE id = $1', [produtoId]);
         
         await client.query('COMMIT');
 
-        // Converte as respostas para camelCase para o frontend
-        const movCamelCase = {};
-        for (const key in novaMov) {
-            movCamelCase[key.replace(/([-_][a-z])/ig, $1 => $1.toUpperCase().replace('_', '').replace('-', ''))] = novaMov[key];
-        }
-        const produtoCamelCase = {};
-        for (const key in updatedProductResult.rows[0]) {
-            produtoCamelCase[key.replace(/([-_][a-z])/ig, $1 => $1.toUpperCase().replace('_', '').replace('-', ''))] = updatedProductResult.rows[0][key];
-        }
-
-        res.status(201).json({ movimentacao: movCamelCase, produto: produtoCamelCase });
-
+        res.status(201).json({ 
+            movimentacao: toCamelCase(novaMov), 
+            produto: toCamelCase(updatedProductResult.rows[0]) 
+        });
     } catch (err) {
         await client.query('ROLLBACK');
-        if (err.message === 'Product not found for movement.') {
-            res.status(404).json({ error: err.message });
-        } else {
-            res.status(500).json({ error: `Transaction failed: ${err.message}` });
-        }
+        res.status(500).json({ error: `Transaction failed: ${err.message}` });
     } finally {
         client.release();
     }
 });
-
 
 // --- INICIAR O SERVIDOR ---
 app.listen(PORT, () => {
