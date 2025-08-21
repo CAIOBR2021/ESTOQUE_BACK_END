@@ -243,6 +243,77 @@ app.post('/api/movimentacoes', async (req, res) => {
     }
 });
 
+// ## NOVA ROTA ##
+// DELETE: Excluir uma movimentação e reverter o estoque (com transação)
+app.delete('/api/movimentacoes/:id', async (req, res) => {
+    const { id } = req.params;
+    const client = await pool.connect();
+
+    try {
+        // Inicia a transação
+        await client.query('BEGIN');
+
+        // 1. Encontra a movimentação que será deletada
+        const movResult = await client.query('SELECT * FROM movimentacoes WHERE id = $1', [id]);
+        if (movResult.rowCount === 0) {
+            throw new Error('Movimentação não encontrada.');
+        }
+        const movimentacao = movResult.rows[0];
+
+        // 2. Encontra o produto associado e o "trava" para a atualização
+        const productResult = await client.query('SELECT * FROM produtos WHERE id = $1 FOR UPDATE', [movimentacao.produtoid]);
+        if (productResult.rowCount === 0) {
+            throw new Error('Produto associado não encontrado.');
+        }
+        const produto = productResult.rows[0];
+
+        // 3. Calcula a reversão do estoque
+        let novaQuantidade;
+        if (movimentacao.tipo === 'saida') {
+            novaQuantidade = produto.quantidade + movimentacao.quantidade;
+        } else if (movimentacao.tipo === 'entrada') {
+            novaQuantidade = produto.quantidade - movimentacao.quantidade;
+        } else {
+            // A exclusão de "ajustes" é ambígua e pode levar a inconsistências.
+            // É mais seguro proibir essa ação específica.
+            throw new Error('Não é possível excluir uma movimentação do tipo "ajuste".');
+        }
+        // Garante que o estoque não fique negativo
+        novaQuantidade = Math.max(0, novaQuantidade);
+
+        // 4. Atualiza o produto com a nova quantidade e retorna o produto atualizado
+        const updateResult = await client.query(
+            'UPDATE produtos SET quantidade = $1, atualizadoem = $2 WHERE id = $3 RETURNING *',
+            [novaQuantidade, nowISO(), movimentacao.produtoid]
+        );
+        const produtoAtualizado = updateResult.rows[0];
+
+        // 5. Exclui a movimentação
+        await client.query('DELETE FROM movimentacoes WHERE id = $1', [id]);
+
+        // 6. Confirma todas as operações da transação
+        await client.query('COMMIT');
+        
+        // 7. Envia a resposta de sucesso com o produto atualizado para o frontend
+        res.status(200).json({ produtoAtualizado: toCamelCase(produtoAtualizado) });
+
+    } catch (err) {
+        // Em caso de qualquer erro, desfaz todas as operações
+        await client.query('ROLLBACK');
+        
+        // Retorna um erro específico se for uma tentativa de excluir "ajuste"
+        if (err.message.includes('ajuste')) {
+            res.status(400).json({ error: err.message });
+        } else {
+            res.status(500).json({ error: `Falha na transação: ${err.message}` });
+        }
+    } finally {
+        // Libera o cliente do pool, independentemente do resultado
+        client.release();
+    }
+});
+
+
 // --- INICIAR O SERVIDOR ---
 app.listen(PORT, () => {
   console.log(`🚀 Backend server running at http://localhost:${PORT}`);
