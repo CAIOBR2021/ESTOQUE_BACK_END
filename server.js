@@ -86,10 +86,21 @@ function toCamelCase(obj) {
 
 // --- ROTAS DA API ---
 
-// GET: Listar todos os produtos
+// GET: Listar todos os produtos (AGORA COM PAGINAÇÃO)
 app.get('/api/produtos', async (req, res) => {
+  // Lê os parâmetros de paginação da URL da requisição.
+  // Usamos valores padrão (página 1, limite 25) caso não sejam fornecidos.
+  const page = parseInt(req.query._page, 10) || 1;
+  const limit = parseInt(req.query._limit, 10) || 25;
+
+  // Calcula o OFFSET (quantos registros pular).
+  const offset = (page - 1) * limit;
+
   try {
-    const { rows } = await pool.query('SELECT * FROM produtos ORDER BY nome ASC');
+    // Modifica a consulta SQL para usar LIMIT e OFFSET.
+    const sql = 'SELECT * FROM produtos ORDER BY nome ASC LIMIT $1 OFFSET $2';
+    const { rows } = await pool.query(sql, [limit, offset]);
+    
     res.json(rows.map(toCamelCase));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -243,7 +254,6 @@ app.post('/api/movimentacoes', async (req, res) => {
     }
 });
 
-// ## NOVA ROTA ##
 // DELETE: Excluir uma movimentação e reverter o estoque (com transação)
 app.delete('/api/movimentacoes/:id', async (req, res) => {
     const { id } = req.params;
@@ -275,7 +285,6 @@ app.delete('/api/movimentacoes/:id', async (req, res) => {
             novaQuantidade = produto.quantidade - movimentacao.quantidade;
         } else {
             // A exclusão de "ajustes" é ambígua e pode levar a inconsistências.
-            // É mais seguro proibir essa ação específica.
             throw new Error('Não é possível excluir uma movimentação do tipo "ajuste".');
         }
         // Garante que o estoque não fique negativo
