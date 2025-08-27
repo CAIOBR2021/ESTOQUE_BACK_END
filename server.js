@@ -186,8 +186,11 @@ app.post('/api/produtos', async (req, res) => {
   }
 });
 
-// PUT: Atualizar produto existente
-app.put('/api/produtos/:id', async (req, res) => {
+// ###############################################################
+// ## ALTERAÇÃO APLICADA AQUI: app.put FOI MUDADO PARA app.patch ##
+// ###############################################################
+// PATCH: Atualizar produto existente (ao invés de PUT)
+app.patch('/api/produtos/:id', async (req, res) => {
   const { id } = req.params;
   const patch = req.body;
   const allowedFields = [
@@ -286,12 +289,10 @@ app.post('/api/movimentacoes', async (req, res) => {
       [produtoId],
     );
     await client.query('COMMIT');
-    res
-      .status(201)
-      .json({
-        movimentacao: toCamelCase(novaMov),
-        produto: toCamelCase(updatedProductResult.rows[0]),
-      });
+    res.status(201).json({
+      movimentacao: toCamelCase(novaMov),
+      produto: toCamelCase(updatedProductResult.rows[0]),
+    });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: `Transaction failed: ${err.message}` });
