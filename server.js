@@ -1,7 +1,9 @@
 const express = require('express');
-const cors = require('cors');
+const cors =require('cors');
 const crypto = require('crypto');
 const { Pool } = require('pg');
+require('dotenv').config(); // <-- ADICIONADO: Carrega as variáveis de ambiente
+const { sendLowStockEmail } = require('./services/emailService'); // <-- ADICIONADO: Importa a função de e-mail
 
 // --- CONFIGURAÇÃO INICIAL ---
 const app = express();
@@ -83,6 +85,7 @@ function nowISO() {
 }
 
 function toCamelCase(obj) {
+  if (!obj) return obj;
   const newObj = {};
   for (const key in obj) {
     const camelKey = key.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
@@ -186,10 +189,8 @@ app.post('/api/produtos', async (req, res) => {
   }
 });
 
-// ###############################################################
-// ## ALTERAÇÃO APLICADA AQUI: app.put FOI MUDADO PARA app.patch ##
-// ###############################################################
-// PATCH: Atualizar produto existente (ao invés de PUT)
+
+// PATCH: Atualizar produto existente
 app.patch('/api/produtos/:id', async (req, res) => {
   const { id } = req.params;
   const patch = req.body;
@@ -244,7 +245,7 @@ app.delete('/api/produtos/:id', async (req, res) => {
   }
 });
 
-// POST: Criar movimentação (com transação)
+// POST: Criar movimentação (com transação e notificação por e-mail)
 app.post('/api/movimentacoes', async (req, res) => {
   const { produtoId, tipo, quantidade, motivo } = req.body;
   if (!produtoId || !tipo || !quantidade || Number(quantidade) <= 0) {
@@ -259,7 +260,10 @@ app.post('/api/movimentacoes', async (req, res) => {
     );
     const produto = productResult.rows[0];
     if (!produto) throw new Error('Product not found for movement.');
+
+    const estoqueAnterior = produto.quantidade;
     let novaQuantidade;
+
     if (tipo === 'ajuste') {
       novaQuantidade = Number(quantidade);
     } else {
@@ -268,6 +272,18 @@ app.post('/api/movimentacoes', async (req, res) => {
       novaQuantidade = produto.quantidade + delta;
     }
     novaQuantidade = Math.max(0, novaQuantidade);
+
+    // <-- ADICIONADO: Início da lógica de notificação
+    if (
+      produto.estoqueminimo !== null &&
+      estoqueAnterior > produto.estoqueminimo &&
+      novaQuantidade <= produto.estoqueminimo
+    ) {
+      const produtoParaEmail = { ...produto, quantidade: novaQuantidade };
+      sendLowStockEmail(toCamelCase(produtoParaEmail));
+    }
+    // <-- ADICIONADO: Fim da lógica de notificação
+
     await client.query(
       'UPDATE produtos SET quantidade = $1, atualizadoem = $2 WHERE id = $3',
       [novaQuantidade, nowISO(), produtoId],
@@ -301,7 +317,7 @@ app.post('/api/movimentacoes', async (req, res) => {
   }
 });
 
-// DELETE: Excluir uma movimentação e reverter o estoque (com transação)
+// DELETE: Excluir uma movimentação e reverter o estoque (com transação e notificação)
 app.delete('/api/movimentacoes/:id', async (req, res) => {
   const { id } = req.params;
   const client = await pool.connect();
@@ -323,7 +339,9 @@ app.delete('/api/movimentacoes/:id', async (req, res) => {
       throw new Error('Produto associado não encontrado.');
     }
     const produto = productResult.rows[0];
+    const estoqueAnterior = produto.quantidade;
     let novaQuantidade;
+
     if (movimentacao.tipo === 'saida') {
       novaQuantidade = produto.quantidade + movimentacao.quantidade;
     } else if (movimentacao.tipo === 'entrada') {
@@ -334,6 +352,18 @@ app.delete('/api/movimentacoes/:id', async (req, res) => {
       );
     }
     novaQuantidade = Math.max(0, novaQuantidade);
+
+    // <-- ADICIONADO: Início da lógica de notificação
+    if (
+        produto.estoqueminimo !== null &&
+        estoqueAnterior > produto.estoqueminimo &&
+        novaQuantidade <= produto.estoqueminimo
+    ) {
+        const produtoParaEmail = { ...produto, quantidade: novaQuantidade };
+        sendLowStockEmail(toCamelCase(produtoParaEmail));
+    }
+    // <-- ADICIONADO: Fim da lógica de notificação
+
     const updateResult = await client.query(
       'UPDATE produtos SET quantidade = $1, atualizadoem = $2 WHERE id = $3 RETURNING *',
       [novaQuantidade, nowISO(), movimentacao.produtoid],
