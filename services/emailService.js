@@ -11,7 +11,11 @@ const resend = new Resend(process.env.RESEND_API_KEY);
  */
 async function sendLowStockEmail(produto) {
   // Verificação para garantir que os dados necessários existem
-  if (!produto || typeof produto.estoqueMinimo === 'undefined' || !process.env.EMAIL_RECIPIENTS) {
+  if (
+    !produto ||
+    typeof produto.estoqueMinimo === 'undefined' ||
+    !process.env.EMAIL_RECIPIENTS
+  ) {
     return;
   }
 
@@ -48,13 +52,21 @@ async function sendLowStockEmail(produto) {
     });
 
     if (error) {
-      console.error(`ERRO ao enviar e-mail de notificação para ${produto.nome}:`, error);
+      console.error(
+        `ERRO ao enviar e-mail de notificação para ${produto.nome}:`,
+        error,
+      );
       return;
     }
 
-    console.log(`E-mail de alerta enviado com sucesso para ${produto.nome}. ID: ${data.id}`);
+    console.log(
+      `E-mail de alerta enviado com sucesso para ${produto.nome}. ID: ${data.id}`,
+    );
   } catch (error) {
-    console.error(`ERRO ao enviar e-mail de notificação para ${produto.nome}:`, error);
+    console.error(
+      `ERRO ao enviar e-mail de notificação para ${produto.nome}:`,
+      error,
+    );
   }
 }
 
