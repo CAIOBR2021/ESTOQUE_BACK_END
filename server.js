@@ -2,8 +2,8 @@ const express = require('express');
 const cors =require('cors');
 const crypto = require('crypto');
 const { Pool } = require('pg');
-require('dotenv').config(); // <-- ADICIONADO: Carrega as variáveis de ambiente
-const { sendLowStockEmail } = require('./services/emailService'); // <-- ADICIONADO: Importa a função de e-mail
+require('dotenv').config();
+const { sendLowStockEmail } = require('./services/emailService');
 
 // --- CONFIGURAÇÃO INICIAL ---
 const app = express();
@@ -115,12 +115,12 @@ app.get('/api/produtos', async (req, res) => {
 
     if (searchTerm) {
       sql = `
-        SELECT * FROM produtos 
-        WHERE 
-          nome ILIKE $1 OR 
-          sku ILIKE $1 OR 
-          categoria ILIKE $1 
-        ORDER BY nome ASC 
+        SELECT * FROM produtos
+        WHERE
+          nome ILIKE $1 OR
+          sku ILIKE $1 OR
+          categoria ILIKE $1
+        ORDER BY nome ASC
         LIMIT $2 OFFSET $3
       `;
       params.push(`%${searchTerm}%`, limit, offset);
@@ -178,7 +178,7 @@ app.post('/api/produtos', async (req, res) => {
     atualizadoem: null,
   };
   const sql = `
-    INSERT INTO produtos (id, sku, nome, descricao, categoria, unidade, quantidade, estoqueminimo, localarmazenamento, fornecedor, criadoem, atualizadoem) 
+    INSERT INTO produtos (id, sku, nome, descricao, categoria, unidade, quantidade, estoqueminimo, localarmazenamento, fornecedor, criadoem, atualizadoem)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`;
   const params = Object.values(novoProduto);
   try {
@@ -273,7 +273,6 @@ app.post('/api/movimentacoes', async (req, res) => {
     }
     novaQuantidade = Math.max(0, novaQuantidade);
 
-    // <-- ADICIONADO: Início da lógica de notificação
     if (
       produto.estoqueminimo !== null &&
       estoqueAnterior > produto.estoqueminimo &&
@@ -282,7 +281,6 @@ app.post('/api/movimentacoes', async (req, res) => {
       const produtoParaEmail = { ...produto, quantidade: novaQuantidade };
       sendLowStockEmail(toCamelCase(produtoParaEmail));
     }
-    // <-- ADICIONADO: Fim da lógica de notificação
 
     await client.query(
       'UPDATE produtos SET quantidade = $1, atualizadoem = $2 WHERE id = $3',
@@ -316,6 +314,85 @@ app.post('/api/movimentacoes', async (req, res) => {
     client.release();
   }
 });
+
+// --- NOVA ROTA ---
+// PATCH: Editar uma movimentação existente
+app.patch('/api/movimentacoes/:id', async (req, res) => {
+  const { id } = req.params;
+  const { quantidade, motivo } = req.body;
+
+  if (!quantidade || Number(quantidade) <= 0) {
+    return res.status(400).json({ error: 'A quantidade é obrigatória e deve ser maior que zero.' });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // 1. Busca a movimentação e o produto original
+    const movResult = await client.query('SELECT * FROM movimentacoes WHERE id = $1 FOR UPDATE', [id]);
+    if (movResult.rowCount === 0) throw new Error('Movimentação não encontrada.');
+    const movimentacaoAntiga = movResult.rows[0];
+
+    if (movimentacaoAntiga.tipo === 'ajuste') {
+      throw new Error('Não é permitido editar movimentações do tipo "ajuste".');
+    }
+
+    const produtoResult = await client.query('SELECT * FROM produtos WHERE id = $1 FOR UPDATE', [movimentacaoAntiga.produtoid]);
+    if (produtoResult.rowCount === 0) throw new Error('Produto associado não encontrado.');
+    const produto = produtoResult.rows[0];
+    const estoqueAnterior = produto.quantidade;
+
+    // 2. Calcula a diferença de quantidade
+    const diferenca = quantidade - movimentacaoAntiga.quantidade;
+
+    // 3. Calcula a nova quantidade em estoque
+    let novaQuantidadeEstoque;
+    if (movimentacaoAntiga.tipo === 'entrada') {
+      novaQuantidadeEstoque = produto.quantidade + diferenca;
+    } else { // 'saida'
+      novaQuantidadeEstoque = produto.quantidade - diferenca;
+    }
+    novaQuantidadeEstoque = Math.max(0, novaQuantidadeEstoque);
+
+    // 4. Atualiza o produto
+    const updateProdResult = await client.query(
+      'UPDATE produtos SET quantidade = $1, atualizadoem = $2 WHERE id = $3 RETURNING *',
+      [novaQuantidadeEstoque, nowISO(), produto.id]
+    );
+    const produtoAtualizado = updateProdResult.rows[0];
+
+    // 5. Atualiza a movimentação
+    const updateMovResult = await client.query(
+      'UPDATE movimentacoes SET quantidade = $1, motivo = $2 WHERE id = $3 RETURNING *',
+      [quantidade, motivo, id]
+    );
+    const movimentacaoAtualizada = updateMovResult.rows[0];
+    
+    // 6. Verifica e envia notificação de estoque baixo, se necessário
+    if (
+      produto.estoqueminimo !== null &&
+      estoqueAnterior > produto.estoqueminimo &&
+      novaQuantidadeEstoque <= produto.estoqueminimo
+    ) {
+      sendLowStockEmail(toCamelCase(produtoAtualizado));
+    }
+
+    await client.query('COMMIT');
+    res.status(200).json({
+        movimentacaoAtualizada: toCamelCase(movimentacaoAtualizada),
+        produtoAtualizado: toCamelCase(produtoAtualizado),
+    });
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: `Falha na transação: ${err.message}` });
+  } finally {
+    client.release();
+  }
+});
+
 
 // DELETE: Excluir uma movimentação e reverter o estoque (com transação e notificação)
 app.delete('/api/movimentacoes/:id', async (req, res) => {
@@ -353,7 +430,6 @@ app.delete('/api/movimentacoes/:id', async (req, res) => {
     }
     novaQuantidade = Math.max(0, novaQuantidade);
 
-    // <-- ADICIONADO: Início da lógica de notificação
     if (
         produto.estoqueminimo !== null &&
         estoqueAnterior > produto.estoqueminimo &&
@@ -362,7 +438,6 @@ app.delete('/api/movimentacoes/:id', async (req, res) => {
         const produtoParaEmail = { ...produto, quantidade: novaQuantidade };
         sendLowStockEmail(toCamelCase(produtoParaEmail));
     }
-    // <-- ADICIONADO: Fim da lógica de notificação
 
     const updateResult = await client.query(
       'UPDATE produtos SET quantidade = $1, atualizadoem = $2 WHERE id = $3 RETURNING *',
