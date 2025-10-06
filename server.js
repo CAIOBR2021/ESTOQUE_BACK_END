@@ -315,7 +315,6 @@ app.post('/api/movimentacoes', async (req, res) => {
   }
 });
 
-// --- NOVA ROTA ---
 // PATCH: Editar uma movimentação existente
 app.patch('/api/movimentacoes/:id', async (req, res) => {
   const { id } = req.params;
@@ -370,12 +369,13 @@ app.patch('/api/movimentacoes/:id', async (req, res) => {
     );
     const movimentacaoAtualizada = updateMovResult.rows[0];
     
-    // 6. Verifica e envia notificação de estoque baixo, se necessário
+    // 6. LÓGICA DE REAVALIAÇÃO E NOTIFICAÇÃO
     if (
-      produto.estoqueminimo !== null &&
-      estoqueAnterior > produto.estoqueminimo &&
-      novaQuantidadeEstoque <= produto.estoqueminimo
+      produto.estoqueminimo !== null && // Se existe um estoque mínimo definido
+      estoqueAnterior > produto.estoqueminimo && // Se o estoque ANTERIOR estava OK
+      novaQuantidadeEstoque <= produto.estoqueminimo // E o NOVO estoque ficou abaixo do mínimo
     ) {
+      // Envia o e-mail com os dados atualizados do produto
       sendLowStockEmail(toCamelCase(produtoAtualizado));
     }
 
