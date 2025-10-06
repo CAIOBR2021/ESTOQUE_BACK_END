@@ -1,5 +1,5 @@
 const express = require('express');
-const cors =require('cors');
+const cors = require('cors');
 const crypto = require('crypto');
 const { Pool } = require('pg');
 require('dotenv').config();
@@ -189,7 +189,6 @@ app.post('/api/produtos', async (req, res) => {
   }
 });
 
-
 // PATCH: Atualizar produto existente
 app.patch('/api/produtos/:id', async (req, res) => {
   const { id } = req.params;
@@ -321,7 +320,9 @@ app.patch('/api/movimentacoes/:id', async (req, res) => {
   const { quantidade, motivo } = req.body;
 
   if (!quantidade || Number(quantidade) <= 0) {
-    return res.status(400).json({ error: 'A quantidade é obrigatória e deve ser maior que zero.' });
+    return res
+      .status(400)
+      .json({ error: 'A quantidade é obrigatória e deve ser maior que zero.' });
   }
 
   const client = await pool.connect();
@@ -330,16 +331,24 @@ app.patch('/api/movimentacoes/:id', async (req, res) => {
     await client.query('BEGIN');
 
     // 1. Busca a movimentação e o produto original
-    const movResult = await client.query('SELECT * FROM movimentacoes WHERE id = $1 FOR UPDATE', [id]);
-    if (movResult.rowCount === 0) throw new Error('Movimentação não encontrada.');
+    const movResult = await client.query(
+      'SELECT * FROM movimentacoes WHERE id = $1 FOR UPDATE',
+      [id],
+    );
+    if (movResult.rowCount === 0)
+      throw new Error('Movimentação não encontrada.');
     const movimentacaoAntiga = movResult.rows[0];
 
     if (movimentacaoAntiga.tipo === 'ajuste') {
       throw new Error('Não é permitido editar movimentações do tipo "ajuste".');
     }
 
-    const produtoResult = await client.query('SELECT * FROM produtos WHERE id = $1 FOR UPDATE', [movimentacaoAntiga.produtoid]);
-    if (produtoResult.rowCount === 0) throw new Error('Produto associado não encontrado.');
+    const produtoResult = await client.query(
+      'SELECT * FROM produtos WHERE id = $1 FOR UPDATE',
+      [movimentacaoAntiga.produtoid],
+    );
+    if (produtoResult.rowCount === 0)
+      throw new Error('Produto associado não encontrado.');
     const produto = produtoResult.rows[0];
     const estoqueAnterior = produto.quantidade;
 
@@ -350,7 +359,8 @@ app.patch('/api/movimentacoes/:id', async (req, res) => {
     let novaQuantidadeEstoque;
     if (movimentacaoAntiga.tipo === 'entrada') {
       novaQuantidadeEstoque = produto.quantidade + diferenca;
-    } else { // 'saida'
+    } else {
+      // 'saida'
       novaQuantidadeEstoque = produto.quantidade - diferenca;
     }
     novaQuantidadeEstoque = Math.max(0, novaQuantidadeEstoque);
@@ -358,17 +368,17 @@ app.patch('/api/movimentacoes/:id', async (req, res) => {
     // 4. Atualiza o produto
     const updateProdResult = await client.query(
       'UPDATE produtos SET quantidade = $1, atualizadoem = $2 WHERE id = $3 RETURNING *',
-      [novaQuantidadeEstoque, nowISO(), produto.id]
+      [novaQuantidadeEstoque, nowISO(), produto.id],
     );
     const produtoAtualizado = updateProdResult.rows[0];
 
     // 5. Atualiza a movimentação
     const updateMovResult = await client.query(
       'UPDATE movimentacoes SET quantidade = $1, motivo = $2 WHERE id = $3 RETURNING *',
-      [quantidade, motivo, id]
+      [quantidade, motivo, id],
     );
     const movimentacaoAtualizada = updateMovResult.rows[0];
-    
+
     // 6. LÓGICA DE REAVALIAÇÃO E NOTIFICAÇÃO
     if (
       produto.estoqueminimo !== null && // Se existe um estoque mínimo definido
@@ -381,10 +391,9 @@ app.patch('/api/movimentacoes/:id', async (req, res) => {
 
     await client.query('COMMIT');
     res.status(200).json({
-        movimentacaoAtualizada: toCamelCase(movimentacaoAtualizada),
-        produtoAtualizado: toCamelCase(produtoAtualizado),
+      movimentacaoAtualizada: toCamelCase(movimentacaoAtualizada),
+      produtoAtualizado: toCamelCase(produtoAtualizado),
     });
-
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: `Falha na transação: ${err.message}` });
@@ -392,7 +401,6 @@ app.patch('/api/movimentacoes/:id', async (req, res) => {
     client.release();
   }
 });
-
 
 // DELETE: Excluir uma movimentação e reverter o estoque (com transação e notificação)
 app.delete('/api/movimentacoes/:id', async (req, res) => {
@@ -431,12 +439,12 @@ app.delete('/api/movimentacoes/:id', async (req, res) => {
     novaQuantidade = Math.max(0, novaQuantidade);
 
     if (
-        produto.estoqueminimo !== null &&
-        estoqueAnterior > produto.estoqueminimo &&
-        novaQuantidade <= produto.estoqueminimo
+      produto.estoqueminimo !== null &&
+      estoqueAnterior > produto.estoqueminimo &&
+      novaQuantidade <= produto.estoqueminimo
     ) {
-        const produtoParaEmail = { ...produto, quantidade: novaQuantidade };
-        sendLowStockEmail(toCamelCase(produtoParaEmail));
+      const produtoParaEmail = { ...produto, quantidade: novaQuantidade };
+      sendLowStockEmail(toCamelCase(produtoParaEmail));
     }
 
     const updateResult = await client.query(
