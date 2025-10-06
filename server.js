@@ -272,10 +272,11 @@ app.post('/api/movimentacoes', async (req, res) => {
     }
     novaQuantidade = Math.max(0, novaQuantidade);
 
+    // LÓGICA DE NOTIFICAÇÃO ATUALIZADA
     if (
       produto.estoqueminimo !== null &&
-      estoqueAnterior > produto.estoqueminimo &&
-      novaQuantidade <= produto.estoqueminimo
+      novaQuantidade <= produto.estoqueminimo &&
+      novaQuantidade !== estoqueAnterior
     ) {
       const produtoParaEmail = { ...produto, quantidade: novaQuantidade };
       sendLowStockEmail(toCamelCase(produtoParaEmail));
@@ -379,11 +380,11 @@ app.patch('/api/movimentacoes/:id', async (req, res) => {
     );
     const movimentacaoAtualizada = updateMovResult.rows[0];
 
-    // 6. LÓGICA DE REAVALIAÇÃO E NOTIFICAÇÃO
+    // 6. LÓGICA DE REAVALIAÇÃO E NOTIFICAÇÃO ATUALIZADA
     if (
-      produto.estoqueminimo !== null && // Se existe um estoque mínimo definido
-      estoqueAnterior > produto.estoqueminimo && // Se o estoque ANTERIOR estava OK
-      novaQuantidadeEstoque <= produto.estoqueminimo // E o NOVO estoque ficou abaixo do mínimo
+      produto.estoqueminimo !== null &&
+      novaQuantidadeEstoque <= produto.estoqueminimo &&
+      novaQuantidadeEstoque !== estoqueAnterior // Só envia se o estoque realmente mudou
     ) {
       // Envia o e-mail com os dados atualizados do produto
       sendLowStockEmail(toCamelCase(produtoAtualizado));
@@ -438,20 +439,21 @@ app.delete('/api/movimentacoes/:id', async (req, res) => {
     }
     novaQuantidade = Math.max(0, novaQuantidade);
 
-    if (
-      produto.estoqueminimo !== null &&
-      estoqueAnterior > produto.estoqueminimo &&
-      novaQuantidade <= produto.estoqueminimo
-    ) {
-      const produtoParaEmail = { ...produto, quantidade: novaQuantidade };
-      sendLowStockEmail(toCamelCase(produtoParaEmail));
-    }
-
     const updateResult = await client.query(
       'UPDATE produtos SET quantidade = $1, atualizadoem = $2 WHERE id = $3 RETURNING *',
       [novaQuantidade, nowISO(), movimentacao.produtoid],
     );
     const produtoAtualizado = updateResult.rows[0];
+
+    // LÓGICA DE NOTIFICAÇÃO ATUALIZADA
+    if (
+      produto.estoqueminimo !== null &&
+      novaQuantidade <= produto.estoqueminimo &&
+      novaQuantidade !== estoqueAnterior
+    ) {
+      sendLowStockEmail(toCamelCase(produtoAtualizado));
+    }
+
     await client.query('DELETE FROM movimentacoes WHERE id = $1', [id]);
     await client.query('COMMIT');
     res.status(200).json({ produtoAtualizado: toCamelCase(produtoAtualizado) });
