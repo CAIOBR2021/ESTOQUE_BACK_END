@@ -24,7 +24,7 @@ async function sendLowStockEmail(produto) {
   try {
     const { data, error } = await resend.emails.send({
       from: 'Sistema de Estoque <onboarding@resend.dev>', // Atualize para o seu email verificado no Resend
-      to: process.env.EMAIL_RECIPIENTS.split(','),
+      to: process.env.EMAIL_RECIPIENTS.split(',').map((email) => email.trim()),
       subject: `⚠️ Alerta de Estoque Baixo: ${produto.nome}`,
       html: `
         <h1>Alerta de Estoque Baixo</h1>
