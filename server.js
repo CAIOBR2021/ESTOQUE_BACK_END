@@ -49,7 +49,8 @@ async function setupDatabase() {
       localarmazenamento TEXT,
       fornecedor TEXT,
       criadoem TIMESTAMPTZ NOT NULL,
-      atualizadoem TIMESTAMPTZ
+      atualizadoem TIMESTAMPTZ,
+      prioritario BOOLEAN DEFAULT FALSE
     );
 
     CREATE TABLE IF NOT EXISTS movimentacoes (
@@ -176,10 +177,11 @@ app.post('/api/produtos', async (req, res) => {
     fornecedor: fornecedor || null,
     criadoem: nowISO(),
     atualizadoem: null,
+    prioritario: false,
   };
   const sql = `
-    INSERT INTO produtos (id, sku, nome, descricao, categoria, unidade, quantidade, estoqueminimo, localarmazenamento, fornecedor, criadoem, atualizadoem)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`;
+    INSERT INTO produtos (id, sku, nome, descricao, categoria, unidade, quantidade, estoqueminimo, localarmazenamento, fornecedor, criadoem, atualizadoem, prioritario)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`;
   const params = Object.values(novoProduto);
   try {
     const { rows } = await pool.query(sql, params);
@@ -201,6 +203,7 @@ app.patch('/api/produtos/:id', async (req, res) => {
     'estoqueMinimo',
     'localArmazenamento',
     'fornecedor',
+    'prioritario',
   ];
   const fieldsToUpdate = Object.keys(patch).filter((key) =>
     allowedFields.includes(key),
