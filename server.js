@@ -63,14 +63,24 @@ async function setupDatabase() {
       FOREIGN KEY (produtoid) REFERENCES produtos (id) ON DELETE CASCADE
     );
   `;
+  
+  // Script para adicionar a coluna 'prioritario' se ela não existir
+  const alterTableScript = `
+    DO $$
+    BEGIN
+        IF NOT EXISTS(SELECT * FROM information_schema.columns WHERE table_name='produtos' AND column_name='prioritario') THEN
+            ALTER TABLE produtos ADD COLUMN prioritario BOOLEAN DEFAULT FALSE;
+        END IF;
+    END $$;
+  `;
 
   try {
     await pool.query(createTablesScript);
-    console.log(
-      'SUCESSO: Tabelas do banco de dados verificadas/criadas com sucesso.',
-    );
+    console.log('SUCESSO: Tabelas do banco de dados verificadas/criadas com sucesso.');
+    await pool.query(alterTableScript);
+    console.log('SUCESSO: Coluna "prioritario" verificada/adicionada com sucesso.');
   } catch (err) {
-    console.error('ERRO CRÍTICO AO CRIAR TABELAS:', err);
+    console.error('ERRO CRÍTICO AO CONFIGURAR O BANCO DE DADOS:', err);
   }
 }
 
@@ -106,7 +116,7 @@ function toCamelCase(obj) {
 // GET: Listar produtos (COM PAGINAÇÃO E BUSCA)
 app.get('/api/produtos', async (req, res) => {
   const page = parseInt(req.query._page, 10) || 1;
-  const limit = parseInt(req.query._limit, 10) || 25;
+  const limit = parseInt(req.query._limit, 10) || 10000; // Aumentado para buscar todos por padrão
   const offset = (page - 1) * limit;
   const searchTerm = req.query.q || '';
 
@@ -177,7 +187,7 @@ app.post('/api/produtos', async (req, res) => {
     fornecedor: fornecedor || null,
     criadoem: nowISO(),
     atualizadoem: null,
-    prioritario: false,
+    prioritario: false, // Garante valor default
   };
   const sql = `
     INSERT INTO produtos (id, sku, nome, descricao, categoria, unidade, quantidade, estoqueminimo, localarmazenamento, fornecedor, criadoem, atualizadoem, prioritario)
@@ -203,7 +213,7 @@ app.patch('/api/produtos/:id', async (req, res) => {
     'estoqueMinimo',
     'localArmazenamento',
     'fornecedor',
-    'prioritario',
+    'prioritario', // Campo 'prioritario' permitido
   ];
   const fieldsToUpdate = Object.keys(patch).filter((key) =>
     allowedFields.includes(key),
