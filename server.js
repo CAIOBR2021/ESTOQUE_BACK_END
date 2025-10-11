@@ -109,7 +109,7 @@ function toCamelCase(obj) {
     else if (camelKey === 'criadoem') newObj['criadoEm'] = obj[key];
     else if (camelKey === 'atualizadoem') newObj['atualizadoEm'] = obj[key];
     else if (camelKey === 'produtoid') newObj['produtoId'] = obj[key];
-    else if (camelKey === 'valorunitario') newObj['valorUnitario'] = obj[key]; // Adicionado
+    else if (camelKey === 'valorunitario') newObj['valorUnitario'] = obj[key];
     else newObj[camelKey] = obj[key];
   }
   return newObj;
@@ -174,7 +174,7 @@ app.post('/api/produtos', async (req, res) => {
     estoqueMinimo,
     localArmazenamento,
     fornecedor,
-    valorUnitario, // Adicionado
+    valorUnitario,
   } = req.body;
 
   if (!nome || !unidade) {
@@ -195,7 +195,7 @@ app.post('/api/produtos', async (req, res) => {
     criadoem: nowISO(),
     atualizadoem: null,
     prioritario: false,
-    valorunitario: valorUnitario !== undefined ? Number(valorUnitario) : null, // Adicionado
+    valorunitario: valorUnitario !== undefined ? Number(valorUnitario) : null,
   };
 
   const sql = `
@@ -212,7 +212,6 @@ app.post('/api/produtos', async (req, res) => {
   }
 });
 
-
 // PATCH: Atualizar produto existente
 app.patch('/api/produtos/:id', async (req, res) => {
   const { id } = req.params;
@@ -226,7 +225,7 @@ app.patch('/api/produtos/:id', async (req, res) => {
     'localArmazenamento',
     'fornecedor',
     'prioritario',
-    'valorUnitario', // Adicionado
+    'valorUnitario',
   ];
   const fieldsToUpdate = Object.keys(patch).filter((key) =>
     allowedFields.includes(key),
@@ -237,7 +236,6 @@ app.patch('/api/produtos/:id', async (req, res) => {
       .json({ error: 'Nenhum campo válido para atualização foi fornecido.' });
   }
   
-  // Mapeia camelCase para snake_case do banco
   const dbFieldsToUpdate = fieldsToUpdate.map(field => {
       if (field === 'estoqueMinimo') return 'estoqueminimo';
       if (field === 'localArmazenamento') return 'localarmazenamento';
@@ -507,6 +505,27 @@ app.delete('/api/movimentacoes/:id', async (req, res) => {
     client.release();
   }
 });
+
+// POST: Obter valor total do estoque (rota segura)
+app.post('/api/produtos/valor-total', async (req, res) => {
+  const { password } = req.body;
+
+  // Verificação de segurança. A senha deve ser definida no .env
+  if (!password || password !== process.env.ADMIN_PASSWORD) {
+    return res.status(401).json({ error: 'Não autorizado.' });
+  }
+
+  try {
+    const { rows } = await pool.query(
+      'SELECT SUM(quantidade * valorunitario) as valorTotal FROM produtos WHERE valorunitario IS NOT NULL AND valorunitario > 0'
+    );
+    const valorTotal = rows[0].valortotal || 0;
+    res.json({ valorTotal: parseFloat(valorTotal) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 // --- INICIAR O SERVIDOR ---
 app.listen(PORT, () => {
