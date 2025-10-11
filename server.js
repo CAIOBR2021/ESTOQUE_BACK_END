@@ -50,7 +50,8 @@ async function setupDatabase() {
       fornecedor TEXT,
       criadoem TIMESTAMPTZ NOT NULL,
       atualizadoem TIMESTAMPTZ,
-      prioritario BOOLEAN DEFAULT FALSE
+      prioritario BOOLEAN DEFAULT FALSE,
+      valorunitario NUMERIC(10, 2)
     );
 
     CREATE TABLE IF NOT EXISTS movimentacoes (
@@ -64,12 +65,15 @@ async function setupDatabase() {
     );
   `;
   
-  // Script para adicionar a coluna 'prioritario' se ela não existir
-  const alterTableScript = `
+  // Scripts para adicionar colunas se elas não existirem
+  const alterTableScripts = `
     DO $$
     BEGIN
         IF NOT EXISTS(SELECT * FROM information_schema.columns WHERE table_name='produtos' AND column_name='prioritario') THEN
             ALTER TABLE produtos ADD COLUMN prioritario BOOLEAN DEFAULT FALSE;
+        END IF;
+        IF NOT EXISTS(SELECT * FROM information_schema.columns WHERE table_name='produtos' AND column_name='valorunitario') THEN
+            ALTER TABLE produtos ADD COLUMN valorunitario NUMERIC(10, 2);
         END IF;
     END $$;
   `;
@@ -77,8 +81,8 @@ async function setupDatabase() {
   try {
     await pool.query(createTablesScript);
     console.log('SUCESSO: Tabelas do banco de dados verificadas/criadas com sucesso.');
-    await pool.query(alterTableScript);
-    console.log('SUCESSO: Coluna "prioritario" verificada/adicionada com sucesso.');
+    await pool.query(alterTableScripts);
+    console.log('SUCESSO: Colunas "prioritario" e "valorunitario" verificadas/adicionadas com sucesso.');
   } catch (err) {
     console.error('ERRO CRÍTICO AO CONFIGURAR O BANCO DE DADOS:', err);
   }
@@ -101,11 +105,11 @@ function toCamelCase(obj) {
   for (const key in obj) {
     const camelKey = key.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
     if (camelKey === 'estoqueminimo') newObj['estoqueMinimo'] = obj[key];
-    else if (camelKey === 'localarmazenamento')
-      newObj['localArmazenamento'] = obj[key];
+    else if (camelKey === 'localarmazenamento') newObj['localArmazenamento'] = obj[key];
     else if (camelKey === 'criadoem') newObj['criadoEm'] = obj[key];
     else if (camelKey === 'atualizadoem') newObj['atualizadoEm'] = obj[key];
     else if (camelKey === 'produtoid') newObj['produtoId'] = obj[key];
+    else if (camelKey === 'valorunitario') newObj['valorUnitario'] = obj[key]; // Adicionado
     else newObj[camelKey] = obj[key];
   }
   return newObj;
@@ -116,7 +120,7 @@ function toCamelCase(obj) {
 // GET: Listar produtos (COM PAGINAÇÃO E BUSCA)
 app.get('/api/produtos', async (req, res) => {
   const page = parseInt(req.query._page, 10) || 1;
-  const limit = parseInt(req.query._limit, 10) || 10000; // Aumentado para buscar todos por padrão
+  const limit = parseInt(req.query._limit, 10) || 10000;
   const offset = (page - 1) * limit;
   const searchTerm = req.query.q || '';
 
@@ -170,10 +174,13 @@ app.post('/api/produtos', async (req, res) => {
     estoqueMinimo,
     localArmazenamento,
     fornecedor,
+    valorUnitario, // Adicionado
   } = req.body;
+
   if (!nome || !unidade) {
-    return res.status(400).json({ error: 'Name and Unit are mandatory.' });
+    return res.status(400).json({ error: 'Nome e Unidade são obrigatórios.' });
   }
+
   const novoProduto = {
     id: uid(),
     sku: gerarSKU(),
@@ -187,12 +194,16 @@ app.post('/api/produtos', async (req, res) => {
     fornecedor: fornecedor || null,
     criadoem: nowISO(),
     atualizadoem: null,
-    prioritario: false, // Garante valor default
+    prioritario: false,
+    valorunitario: valorUnitario !== undefined ? Number(valorUnitario) : null, // Adicionado
   };
+
   const sql = `
-    INSERT INTO produtos (id, sku, nome, descricao, categoria, unidade, quantidade, estoqueminimo, localarmazenamento, fornecedor, criadoem, atualizadoem, prioritario)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`;
+    INSERT INTO produtos (id, sku, nome, descricao, categoria, unidade, quantidade, estoqueminimo, localarmazenamento, fornecedor, criadoem, atualizadoem, prioritario, valorunitario)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`;
+  
   const params = Object.values(novoProduto);
+
   try {
     const { rows } = await pool.query(sql, params);
     res.status(201).json(toCamelCase(rows[0]));
@@ -200,6 +211,7 @@ app.post('/api/produtos', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 // PATCH: Atualizar produto existente
 app.patch('/api/produtos/:id', async (req, res) => {
@@ -213,7 +225,8 @@ app.patch('/api/produtos/:id', async (req, res) => {
     'estoqueMinimo',
     'localArmazenamento',
     'fornecedor',
-    'prioritario', // Campo 'prioritario' permitido
+    'prioritario',
+    'valorUnitario', // Adicionado
   ];
   const fieldsToUpdate = Object.keys(patch).filter((key) =>
     allowedFields.includes(key),
@@ -223,14 +236,27 @@ app.patch('/api/produtos/:id', async (req, res) => {
       .status(400)
       .json({ error: 'Nenhum campo válido para atualização foi fornecido.' });
   }
-  const setClause = fieldsToUpdate
-    .map((field, index) => `${field.toLowerCase()} = $${index + 1}`)
+  
+  // Mapeia camelCase para snake_case do banco
+  const dbFieldsToUpdate = fieldsToUpdate.map(field => {
+      if (field === 'estoqueMinimo') return 'estoqueminimo';
+      if (field === 'localArmazenamento') return 'localarmazenamento';
+      if (field === 'valorUnitario') return 'valorunitario';
+      return field;
+  });
+
+  const setClause = dbFieldsToUpdate
+    .map((field, index) => `${field} = $${index + 1}`)
     .join(', ');
+
   const values = fieldsToUpdate.map((key) => patch[key]);
+  
   const sql = `UPDATE produtos SET ${setClause}, atualizadoem = $${
     values.length + 1
   } WHERE id = $${values.length + 2} RETURNING *`;
+  
   const params = [...values, nowISO(), id];
+
   try {
     const result = await pool.query(sql, params);
     if (result.rowCount === 0)
