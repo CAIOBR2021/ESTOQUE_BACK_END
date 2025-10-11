@@ -117,7 +117,18 @@ function toCamelCase(obj) {
 
 // --- ROTAS DA API ---
 
-// GET: Listar produtos (COM PAGINAÇÃO E BUSCA)
+// ROTA DE AUTENTICAÇÃO
+app.post('/api/auth/verify-password', async (req, res) => {
+  const { password } = req.body;
+  if (password && password === process.env.ADMIN_PASSWORD) {
+    res.status(200).json({ success: true });
+  } else {
+    res.status(401).json({ success: false, error: 'Senha incorreta.' });
+  }
+});
+
+
+// ROTAS DE PRODUTOS
 app.get('/api/produtos', async (req, res) => {
   const page = parseInt(req.query._page, 10) || 1;
   const limit = parseInt(req.query._limit, 10) || 10000;
@@ -151,19 +162,6 @@ app.get('/api/produtos', async (req, res) => {
   }
 });
 
-// GET: Listar todas as movimentações
-app.get('/api/movimentacoes', async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      'SELECT * FROM movimentacoes ORDER BY criadoem DESC',
-    );
-    res.json(rows.map(toCamelCase));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST: Criar novo produto
 app.post('/api/produtos', async (req, res) => {
   const {
     nome,
@@ -212,7 +210,6 @@ app.post('/api/produtos', async (req, res) => {
   }
 });
 
-// PATCH: Atualizar produto existente
 app.patch('/api/produtos/:id', async (req, res) => {
   const { id } = req.params;
   const patch = req.body;
@@ -266,7 +263,6 @@ app.patch('/api/produtos/:id', async (req, res) => {
   }
 });
 
-// DELETE: Deletar produto
 app.delete('/api/produtos/:id', async (req, res) => {
   const { id } = req.params;
   try {
@@ -281,7 +277,36 @@ app.delete('/api/produtos/:id', async (req, res) => {
   }
 });
 
-// POST: Criar movimentação (com transação e notificação por e-mail)
+app.post('/api/produtos/valor-total', async (req, res) => {
+  const { password } = req.body;
+
+  if (!password || password !== process.env.ADMIN_PASSWORD) {
+    return res.status(401).json({ error: 'Não autorizado.' });
+  }
+
+  try {
+    const { rows } = await pool.query(
+      'SELECT SUM(quantidade * valorunitario) as valorTotal FROM produtos WHERE valorunitario IS NOT NULL AND valorunitario > 0'
+    );
+    const valorTotal = rows[0].valortotal || 0;
+    res.json({ valorTotal: parseFloat(valorTotal) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ROTAS DE MOVIMENTAÇÕES
+app.get('/api/movimentacoes', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM movimentacoes ORDER BY criadoem DESC',
+    );
+    res.json(rows.map(toCamelCase));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/movimentacoes', async (req, res) => {
   const { produtoId, tipo, quantidade, motivo } = req.body;
   if (!produtoId || !tipo || !quantidade || Number(quantidade) <= 0) {
@@ -309,7 +334,6 @@ app.post('/api/movimentacoes', async (req, res) => {
     }
     novaQuantidade = Math.max(0, novaQuantidade);
 
-    // LÓGICA DE NOTIFICAÇÃO ATUALIZADA
     if (
       produto.estoqueminimo !== null &&
       novaQuantidade <= produto.estoqueminimo &&
@@ -352,7 +376,6 @@ app.post('/api/movimentacoes', async (req, res) => {
   }
 });
 
-// PATCH: Editar uma movimentação existente
 app.patch('/api/movimentacoes/:id', async (req, res) => {
   const { id } = req.params;
   const { quantidade, motivo } = req.body;
@@ -368,7 +391,6 @@ app.patch('/api/movimentacoes/:id', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // 1. Busca a movimentação e o produto original
     const movResult = await client.query(
       'SELECT * FROM movimentacoes WHERE id = $1 FOR UPDATE',
       [id],
@@ -390,40 +412,33 @@ app.patch('/api/movimentacoes/:id', async (req, res) => {
     const produto = produtoResult.rows[0];
     const estoqueAnterior = produto.quantidade;
 
-    // 2. Calcula a diferença de quantidade
     const diferenca = quantidade - movimentacaoAntiga.quantidade;
 
-    // 3. Calcula a nova quantidade em estoque
     let novaQuantidadeEstoque;
     if (movimentacaoAntiga.tipo === 'entrada') {
       novaQuantidadeEstoque = produto.quantidade + diferenca;
     } else {
-      // 'saida'
       novaQuantidadeEstoque = produto.quantidade - diferenca;
     }
     novaQuantidadeEstoque = Math.max(0, novaQuantidadeEstoque);
 
-    // 4. Atualiza o produto
     const updateProdResult = await client.query(
       'UPDATE produtos SET quantidade = $1, atualizadoem = $2 WHERE id = $3 RETURNING *',
       [novaQuantidadeEstoque, nowISO(), produto.id],
     );
     const produtoAtualizado = updateProdResult.rows[0];
 
-    // 5. Atualiza a movimentação
     const updateMovResult = await client.query(
       'UPDATE movimentacoes SET quantidade = $1, motivo = $2 WHERE id = $3 RETURNING *',
       [quantidade, motivo, id],
     );
     const movimentacaoAtualizada = updateMovResult.rows[0];
 
-    // 6. LÓGICA DE REAVALIAÇÃO E NOTIFICAÇÃO ATUALIZADA
     if (
       produto.estoqueminimo !== null &&
       novaQuantidadeEstoque <= produto.estoqueminimo &&
-      novaQuantidadeEstoque !== estoqueAnterior // Só envia se o estoque realmente mudou
+      novaQuantidadeEstoque !== estoqueAnterior
     ) {
-      // Envia o e-mail com os dados atualizados do produto
       sendLowStockEmail(toCamelCase(produtoAtualizado));
     }
 
@@ -440,7 +455,6 @@ app.patch('/api/movimentacoes/:id', async (req, res) => {
   }
 });
 
-// DELETE: Excluir uma movimentação e reverter o estoque (com transação e notificação)
 app.delete('/api/movimentacoes/:id', async (req, res) => {
   const { id } = req.params;
   const client = await pool.connect();
@@ -482,7 +496,6 @@ app.delete('/api/movimentacoes/:id', async (req, res) => {
     );
     const produtoAtualizado = updateResult.rows[0];
 
-    // LÓGICA DE NOTIFICAÇÃO ATUALIZADA
     if (
       produto.estoqueminimo !== null &&
       novaQuantidade <= produto.estoqueminimo &&
@@ -505,27 +518,6 @@ app.delete('/api/movimentacoes/:id', async (req, res) => {
     client.release();
   }
 });
-
-// POST: Obter valor total do estoque (rota segura)
-app.post('/api/produtos/valor-total', async (req, res) => {
-  const { password } = req.body;
-
-  // Verificação de segurança. A senha deve ser definida no .env
-  if (!password || password !== process.env.ADMIN_PASSWORD) {
-    return res.status(401).json({ error: 'Não autorizado.' });
-  }
-
-  try {
-    const { rows } = await pool.query(
-      'SELECT SUM(quantidade * valorunitario) as valorTotal FROM produtos WHERE valorunitario IS NOT NULL AND valorunitario > 0'
-    );
-    const valorTotal = rows[0].valortotal || 0;
-    res.json({ valorTotal: parseFloat(valorTotal) });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 
 // --- INICIAR O SERVIDOR ---
 app.listen(PORT, () => {
